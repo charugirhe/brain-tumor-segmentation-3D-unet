@@ -406,9 +406,32 @@ if analyze_clicked:
     except Exception as e:
         st.warning(f"⚠️ Could not save to database: {e}")
 
-    # ─────────────────────────────────────────
-    # RESULTS SECTION
-    # ─────────────────────────────────────────
+    # Store results in session state so user interactions (e.g. XAI toggles, PDF download) don't trigger re-analysis!
+    st.session_state["analysis_data"] = {
+        "scan_result": scan_result,
+        "patient_info_result": patient_info_result,
+        "comparison_result": comparison_result,
+        "gemini_report": gemini_report,
+        "patient_id": patient_id,
+        "patient_name": patient_name,
+        "age": age,
+        "gender": gender,
+    }
+
+# ─────────────────────────────────────────
+# RESULTS SECTION (PERSISTENT VIA SESSION STATE)
+# ─────────────────────────────────────────
+if "analysis_data" in st.session_state:
+    res_data = st.session_state["analysis_data"]
+    scan_result = res_data["scan_result"]
+    patient_info_result = res_data["patient_info_result"]
+    comparison_result = res_data["comparison_result"]
+    gemini_report = res_data["gemini_report"]
+    res_patient_id = res_data["patient_id"]
+    res_patient_name = res_data["patient_name"]
+    res_age = res_data["age"]
+    res_gender = res_data["gender"]
+
     st.divider()
     st.header("📊 Analysis Results")
 
@@ -474,6 +497,82 @@ if analyze_clicked:
         unsafe_allow_html=True
     )
 
+    # ── Explainable AI (XAI) Section ──
+    if scan_result.get("gradcam_image") or scan_result.get("modality_attribution"):
+        st.divider()
+        st.subheader("🔍 Explainable AI (XAI) & Model Interpretability")
+        st.caption(
+            "Visualizing 3D SegResNet spatial attention via 3D Grad-CAM, "
+            "input sequence importance via Input × Gradient Attribution, and prediction confidence."
+        )
+
+        xai_col1, xai_col2 = st.columns([1.3, 1])
+
+        with xai_col1:
+            st.markdown("#### 🎯 3D Grad-CAM Attention Focus")
+
+            class_options = ["Overall Tumor Focus"]
+            if scan_result.get("class_attentions"):
+                class_options.extend(list(scan_result["class_attentions"].keys()))
+
+            selected_cam_type = st.radio(
+                "Select Model Attention Layer / Sub-Region:",
+                options=class_options,
+                horizontal=True,
+                key="xai_cam_select"
+            )
+
+            display_cam_b64 = scan_result.get("gradcam_image")
+            if selected_cam_type != "Overall Tumor Focus" and scan_result.get("class_attentions"):
+                display_cam_b64 = scan_result["class_attentions"].get(
+                    selected_cam_type, scan_result.get("gradcam_image")
+                )
+
+            cam_subcol1, cam_subcol2 = st.columns(2)
+            with cam_subcol1:
+                st.image(
+                    f"data:image/png;base64,{display_cam_b64}",
+                    caption=f"Grad-CAM Heatmap ({selected_cam_type})",
+                    use_column_width=True
+                )
+            with cam_subcol2:
+                if scan_result.get("confidence_image"):
+                    st.image(
+                        f"data:image/png;base64,{scan_result['confidence_image']}",
+                        caption="Voxel Confidence / Certainty Map",
+                        use_column_width=True
+                    )
+            st.caption(
+                "🔥 **Heatmap Legend:** Warmer colors (Red/Yellow) signify peak neural network focus. "
+                "Cold/Dark areas had negligible influence on the classification."
+            )
+
+        with xai_col2:
+            st.markdown("#### 📊 MRI Sequence Importance")
+            attrib = scan_result.get("modality_attribution", {})
+            if attrib:
+                attrib_df = pd.DataFrame(
+                    list(attrib.items()),
+                    columns=["Modality", "Contribution (%)"]
+                )
+                st.bar_chart(attrib_df.set_index("Modality"), color="#3949ab")
+
+                top_m = scan_result.get("top_modality", "T1CE")
+                top_pct = attrib.get(top_m, 0)
+
+                clinical_notes = {
+                    "T1CE": "T1-weighted Contrast Enhanced (T1CE) is the primary driver. Strong gadolinium uptake indicates breakdown of the blood-brain barrier characteristic of high-grade active tumor.",
+                    "FLAIR": "FLAIR is the primary driver. Hyperintensity on fluid-attenuated inversion recovery highlights vasogenic edema surrounding the tumor core.",
+                    "T1": "T1-weighted sequence contributed anatomical structural boundaries and necrotic core differentiation.",
+                    "T2": "T2-weighted sequence contributed water/cystic fluid contrast."
+                }
+                note = clinical_notes.get(
+                    top_m,
+                    "Multi-sequence feature attribution verified by Input × Gradient."
+                )
+
+                st.info(f"💡 **Clinical Driver ({top_m}: {top_pct}%):** {note}")
+
     # ── Comparison Section ──
     if comparison_result:
         st.divider()
@@ -522,10 +621,10 @@ if analyze_clicked:
     try:
         pdf_bytes = generate_pdf_report(
             patient_info={
-                "patient_id": patient_id,
-                "name": patient_name,
-                "age": age,
-                "gender": gender,
+                "patient_id": res_patient_id,
+                "name": res_patient_name,
+                "age": res_age,
+                "gender": res_gender,
             },
             scan_result=scan_result,
             comparison=comparison_result,
@@ -533,12 +632,13 @@ if analyze_clicked:
             overlay_b64=scan_result.get("overlay_image", ""),
             predicted_b64=scan_result.get("predicted_image", ""),
             gt_b64=scan_result.get("gt_image", ""),
+            gradcam_b64=scan_result.get("gradcam_image", ""),
         )
 
         st.download_button(
             label="📥 Download PDF Report",
             data=pdf_bytes,
-            file_name=f"brain_tumor_report_{patient_id}_{datetime.now().strftime('%Y%m%d')}.pdf",
+            file_name=f"brain_tumor_report_{res_patient_id}_{datetime.now().strftime('%Y%m%d')}.pdf",
             mime="application/pdf",
             type="primary",
             use_container_width=True

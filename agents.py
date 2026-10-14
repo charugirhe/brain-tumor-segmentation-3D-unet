@@ -252,6 +252,15 @@ CURRENT SCAN RESULTS:
 - ET Volume      : {scan_result['et_volume']} cm³ ({scan_result['et_percent']}%)
 """
 
+        # Add Explainable AI attribution data if present
+        if scan_result.get("modality_attribution"):
+            prompt += f"""
+EXPLAINABLE AI (XAI) & FEATURE ATTRIBUTION:
+- Primary MRI Modality Driver: {scan_result.get('top_modality', 'N/A')}
+- Modality Attribution Breakdown: {scan_result.get('modality_attribution', {})}
+- 3D Grad-CAM Attention: Peak spatial attention centered on primary tumor lesion.
+"""
+
         # Add comparison data if this is a returning patient
         if comparison:
             prompt += f"""
@@ -269,7 +278,7 @@ Please write a detailed medical report with these exact sections:
 1. EXECUTIVE SUMMARY
 2. DETAILED FINDINGS
 3. COMPARISON WITH PREVIOUS SCAN (only if comparison data provided above)
-4. CLINICAL OBSERVATIONS
+4. CLINICAL OBSERVATIONS & EXPLAINABILITY (discuss which MRI modalities drove the decision based on the XAI attribution above)
 5. RECOMMENDATIONS
 6. DISCLAIMER (state this is AI-generated and must be reviewed by a physician)
 

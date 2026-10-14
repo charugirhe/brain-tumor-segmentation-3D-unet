@@ -14,6 +14,7 @@ import os
 
 from monai.networks.nets import UNet
 from monai.networks.nets import SegResNet
+from monai.visualize import GradCAM
 from monai.inferers import sliding_window_inference
 from monai.transforms import (
     Compose,
@@ -70,17 +71,16 @@ if torch.cuda.is_available():
     print(f"[Model] GPU: {torch.cuda.get_device_name(0)}")
 
 # ─────────────────────────────────────────
-# MODEL SETUP — Load ONCE at startup
+# MODEL SETUP — Load ONCE at startup (SegResNet)
 # ─────────────────────────────────────────
-model = UNet(
+model = SegResNet(
     spatial_dims=3,
     in_channels=4,
     out_channels=4,
-    channels=(16, 32, 64, 128, 256),
-    strides=(2, 2, 2, 2),
-    num_res_units=2,
-    norm="BATCH",
-    act="RELU",
+    init_filters=16,
+    blocks_down=[1, 2, 2, 4],
+    blocks_up=[1, 1, 1],
+    dropout_prob=0.2,
 ).to(device)
 
 
@@ -90,11 +90,15 @@ if os.path.exists(MODEL_PATH):
     checkpoint = torch.load(MODEL_PATH, map_location=device)
     # Handle common checkpoint formats.
     state_dict = checkpoint
+    epoch = None
+    val_dice = None
     if isinstance(checkpoint, dict):
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]
         elif "state_dict" in checkpoint:
             state_dict = checkpoint["state_dict"]
+        epoch = checkpoint.get("epoch")
+        val_dice = checkpoint.get("val_dice")
 
     # First try direct load (this matches your model.pth keys).
     # Fallback to normalized keys for checkpoints saved with wrappers.
@@ -114,9 +118,13 @@ if os.path.exists(MODEL_PATH):
         model.load_state_dict(normalized_state_dict, strict=True)
 
     model.eval()
-    print("[Model] ✅ Model loaded successfully!")
+    for m in model.modules():
+        if hasattr(m, 'inplace'):
+            m.inplace = False
+    meta_info = f" (Epoch: {epoch}, Val Dice: {val_dice:.4f})" if (val_dice is not None and isinstance(val_dice, (int, float))) else ""
+    print(f"[Model] [OK] SegResNet model loaded successfully!{meta_info}")
 else:
-    print(f"[Model] ⚠️ WARNING: No model found at {MODEL_PATH}")
+    print(f"[Model] [WARNING] No model found at {MODEL_PATH}")
     print("[Model] Please place model weights at MODEL_PATH")
 
 # ─────────────────────────────────────────
@@ -189,6 +197,133 @@ def mask_to_colored(mask_slice):
     return colored
 
 # ─────────────────────────────────────────
+# EXPLAINABLE AI (XAI) ENGINE
+# 1. 3D Grad-CAM Attention Heatmaps
+# 2. Input x Gradient Modality Attribution
+# 3. Softmax Confidence / Uncertainty Maps
+# ─────────────────────────────────────────
+def generate_xai_explanations(image, output, pred_mask, best_slice, flair_img):
+    """
+    Computes Explainable AI (XAI) outputs:
+    1. 3D Grad-CAM Attention Heatmap (model focus)
+    2. Modality Attribution (FLAIR, T1, T1CE, T2 relative contribution)
+    3. Prediction Confidence & Uncertainty Map
+    """
+    print("[XAI] Generating Explainability outputs (Grad-CAM, Modality Attribution, Uncertainty)...")
+    try:
+        flair_slice = flair_img[:, :, best_slice]
+        tumor_coords = np.argwhere(pred_mask > 0)
+        
+        if len(tumor_coords) == 0:
+            return {
+                "gradcam_image": "",
+                "confidence_image": "",
+                "modality_attribution": {"FLAIR": 25.0, "T1": 25.0, "T1CE": 25.0, "T2": 25.0},
+                "top_modality": "None",
+                "class_attentions": {},
+            }
+        
+        center = tumor_coords.mean(axis=0).astype(int)
+        
+        def get_crop_slice(c, sz, max_sz):
+            start = max(0, min(c - sz // 2, max_sz - sz))
+            return slice(start, start + sz)
+
+        sl_h = get_crop_slice(center[0], 128, image.shape[2])
+        sl_w = get_crop_slice(center[1], 128, image.shape[3])
+        sl_d = get_crop_slice(center[2], 128, image.shape[4])
+
+        crop_img = image[:, :, sl_h, sl_w, sl_d].clone().detach().requires_grad_(True)
+        
+        # 1. Modality Attribution via Input x Gradient on crop
+        crop_out = model(crop_img)
+        tumor_score = crop_out[0, 1:].sum()
+        tumor_score.backward()
+        
+        grad = crop_img.grad
+        input_x_grad = (crop_img * grad).abs().sum(dim=(0, 2, 3, 4)).detach().cpu().numpy()
+        total_attrib = float(input_x_grad.sum() + 1e-8)
+        percentages = (input_x_grad / total_attrib) * 100
+        
+        mod_names = ["FLAIR", "T1", "T1CE", "T2"]
+        attribution_dict = {
+            name: round(float(pct), 1)
+            for name, pct in zip(mod_names, percentages)
+        }
+        top_modality = max(attribution_dict, key=attribution_dict.get)
+        
+        # 2. 3D Grad-CAM Attention Heatmap
+        cam = GradCAM(nn_module=model, target_layers="conv_final.0")
+        
+        present_classes = [c for c in [1, 2, 3] if (pred_mask == c).sum() > 0]
+        primary_class = present_classes[-1] if present_classes else 1
+        
+        cam_crop = cam(x=crop_img, class_idx=primary_class).squeeze().detach().cpu().numpy()
+        full_cam = np.zeros(pred_mask.shape, dtype=np.float32)
+        full_cam[sl_h, sl_w, sl_d] = cam_crop
+        cam_slice = full_cam[:, :, best_slice]
+        norm_cam = (cam_slice - cam_slice.min()) / (cam_slice.max() - cam_slice.min() + 1e-8)
+        
+        fig, ax = plt.subplots(figsize=(4, 4))
+        fig.patch.set_facecolor('black')
+        ax.imshow(flair_slice.T, cmap='gray', origin='lower')
+        ax.imshow(norm_cam.T, cmap='jet', alpha=0.55, origin='lower', vmin=0.1, vmax=1.0)
+        ax.axis('off')
+        gradcam_b64 = fig_to_base64(fig)
+        
+        # 3. Class-specific Grad-CAM
+        class_attentions = {}
+        class_labels = {1: "NCR (Necrotic Core)", 2: "ED (Edema)", 3: "ET (Enhancing Tumor)"}
+        for c_idx, c_label in class_labels.items():
+            if (pred_mask == c_idx).sum() > 30:
+                try:
+                    c_cam_crop = cam(x=crop_img, class_idx=c_idx).squeeze().detach().cpu().numpy()
+                    c_full_cam = np.zeros(pred_mask.shape, dtype=np.float32)
+                    c_full_cam[sl_h, sl_w, sl_d] = c_cam_crop
+                    c_slice = c_full_cam[:, :, best_slice]
+                    c_norm = (c_slice - c_slice.min()) / (c_slice.max() - c_slice.min() + 1e-8)
+                    
+                    fig_c, ax_c = plt.subplots(figsize=(4, 4))
+                    fig_c.patch.set_facecolor('black')
+                    ax_c.imshow(flair_slice.T, cmap='gray', origin='lower')
+                    ax_c.imshow(c_norm.T, cmap='jet', alpha=0.55, origin='lower', vmin=0.1, vmax=1.0)
+                    ax_c.axis('off')
+                    class_attentions[c_label] = fig_to_base64(fig_c)
+                except Exception as cam_err:
+                    print(f"[XAI] Class {c_label} CAM note: {cam_err}")
+                    
+        # 4. Confidence / Uncertainty Map
+        probs = torch.softmax(output, dim=1).squeeze(0).cpu().numpy()
+        conf_slice = probs.max(axis=0)[:, :, best_slice]
+        
+        fig, ax = plt.subplots(figsize=(4, 4))
+        fig.patch.set_facecolor('black')
+        ax.imshow(flair_slice.T, cmap='gray', origin='lower')
+        conf_overlay = conf_slice.copy()
+        conf_overlay[pred_mask[:, :, best_slice] == 0] = np.nan
+        ax.imshow(conf_overlay.T, cmap='coolwarm_r', alpha=0.6, origin='lower', vmin=0.5, vmax=1.0)
+        ax.axis('off')
+        confidence_b64 = fig_to_base64(fig)
+        
+        print("[XAI] [OK] XAI explanations generated!")
+        return {
+            "gradcam_image": gradcam_b64,
+            "confidence_image": confidence_b64,
+            "modality_attribution": attribution_dict,
+            "top_modality": top_modality,
+            "class_attentions": class_attentions,
+        }
+    except Exception as e:
+        print(f"[XAI] [WARNING] XAI computation skipped: {e}")
+        return {
+            "gradcam_image": "",
+            "confidence_image": "",
+            "modality_attribution": {},
+            "top_modality": "N/A",
+            "class_attentions": {},
+        }
+
+# ─────────────────────────────────────────
 # MAIN FUNCTION — Run full inference pipeline
 # ─────────────────────────────────────────
 def run_inference(data_dict, has_seg=False):
@@ -198,7 +333,7 @@ def run_inference(data_dict, has_seg=False):
         # Apply preprocessing transforms
         transforms = get_transforms(has_seg=has_seg)
         data = transforms(data_dict)
-        print("[Inference] ✅ Preprocessing complete!")
+        print("[Inference] [OK] Preprocessing complete!")
 
         # Move image to GPU/CPU and add batch dimension
         image = data["image"].unsqueeze(0).to(device)
@@ -216,7 +351,7 @@ def run_inference(data_dict, has_seg=False):
 
         # Get predicted class per voxel
         pred_mask = torch.argmax(output, dim=1).squeeze(0).cpu().numpy()
-        print("[Inference] ✅ Inference complete!")
+        print("[Inference] [OK] Inference complete!")
 
         # Get ground truth mask if available
         gt_mask = None
@@ -304,7 +439,14 @@ def run_inference(data_dict, has_seg=False):
             ax.axis('off')
             gt_b64 = fig_to_base64(fig)
 
-        print("[Inference] ✅ All images generated!")
+        print("[Inference] [OK] All images generated!")
+
+        # ─────────────────────────────────────────
+        # Explainable AI (XAI) Generation
+        # ─────────────────────────────────────────
+        xai_res = {}
+        if tumor_detected:
+            xai_res = generate_xai_explanations(image, output, pred_mask, best_slice, flair_img)
 
         # Return everything
         return {
@@ -320,8 +462,9 @@ def run_inference(data_dict, has_seg=False):
             "predicted_image": predicted_b64,
             "overlay_image":   overlay_b64,
             "gt_image":        gt_b64,
+            **xai_res
         }
 
     except Exception as e:
-        print(f"[Inference] ❌ ERROR: {e}")
+        print(f"[Inference] [ERROR]: {e}")
         raise e

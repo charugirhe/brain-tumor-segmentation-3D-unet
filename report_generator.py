@@ -27,7 +27,8 @@ def generate_pdf_report(
     gemini_report="",
     overlay_b64="",
     predicted_b64="",
-    gt_b64=""
+    gt_b64="",
+    gradcam_b64=""
 ):
     print("[PDF] Generating PDF report...")
 
@@ -194,22 +195,26 @@ def generate_pdf_report(
         images_to_show.append(("Predicted Mask", predicted_b64))
     if overlay_b64:
         images_to_show.append(("MRI + Overlay", overlay_b64))
+    if gradcam_b64:
+        images_to_show.append(("Grad-CAM Attention", gradcam_b64))
 
     if images_to_show:
-        content.append(Paragraph("MRI Scan Images", section_style))
+        content.append(Paragraph("MRI Scan Images & Explainability", section_style))
 
         img_cells = []
         caption_cells = []
+        img_size = 4.0 * cm if len(images_to_show) >= 4 else 5.0 * cm
+        cell_width = 17.0 * cm / len(images_to_show)
 
         for caption, b64_str in images_to_show:
             try:
                 img_data = base64.b64decode(b64_str)
                 img_buf = io.BytesIO(img_data)
-                img = Image(img_buf, width=5*cm, height=5*cm)
+                img = Image(img_buf, width=img_size, height=img_size)
                 img_cells.append(img)
                 caption_cells.append(
                     Paragraph(caption, ParagraphStyle(
-                        'caption', fontSize=9,
+                        'caption', fontSize=8,
                         alignment=TA_CENTER
                     ))
                 )
@@ -219,12 +224,12 @@ def generate_pdf_report(
         if img_cells:
             img_table = Table(
                 [img_cells, caption_cells],
-                colWidths=[5.5*cm] * len(img_cells)
+                colWidths=[cell_width] * len(img_cells)
             )
             img_table.setStyle(TableStyle([
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                ('PADDING', (0, 0), (-1, -1), 6),
+                ('PADDING', (0, 0), (-1, -1), 4),
             ]))
             content.append(img_table)
             content.append(Spacer(1, 12))
