@@ -1,6 +1,6 @@
 # 🧠 Brain Tumor Analysis System
 
-An AI-powered 3D MRI segmentation, explainability (XAI), and clinical report generation system. It uses a **MONAI SegResNet model** (fine-tuned via transfer learning on the BraTS 2020 dataset) and **Google Gemini AI** to automate brain tumor detection, interpret model decisions, and generate detailed clinical reports.
+An AI-powered 3D MRI segmentation, explainability (XAI), and clinical report generation system. It combines a **MONAI SegResNet model** (fine-tuned via transfer learning on the BraTS 2020 dataset), **LangGraph multi-agent orchestration**, and **Google Gemini AI** to automate brain tumor detection, interpret model decisions, and generate detailed clinical reports.
 
 ---
 
@@ -16,7 +16,7 @@ An AI-powered 3D MRI segmentation, explainability (XAI), and clinical report gen
    - 📊 **MRI Modality Attribution:** Quantifies sequence importance (FLAIR vs T1 vs T1CE vs T2) using Input × Gradient saliency.
    - 🛡️ **Voxel Confidence Map:** Maps softmax entropy and model certainty across lesion margins.
 4. **Multi-Modal Support:** Upload your own FLAIR, T1, T1CE, and T2 scans, or load directly from the BraTS dataset.
-5. **Multi-Agent Collaboration:** A cooperative agent system acts like a team of doctors to register patients, run scan inference, compare historical data, and draft reports.
+5. **LangGraph Multi-Agent Orchestration:** A structured state graph workflow (`reception` ➔ `scan_validation` ➔ `segmentation` ➔ `supervisor` ➔ `reporting`) that coordinates patient registration, scan validation, 3D inference, historical progression checks, and medical reporting.
 6. **Historical Comparison:** Automatically tracks tumor volume changes (growth/shrinkage) for returning patients.
 7. **AI Neuro-Radiologist Reports:** Generates professional medical reports with clinical explainability using Google's Gemini API.
 8. **PDF Reports & Visualization:** View overlay images, Grad-CAM attention maps, and download a complete, clinical-style PDF report.
@@ -49,22 +49,30 @@ streamlit run app.py
 ```
 Open the local link (usually `http://localhost:8501`) in your browser to view the application!
 
+### 5. Run Unit Tests (Optional)
+Run the test suite to verify the LangGraph workflow and state transitions:
+```bash
+python -m unittest test_langgraph_workflow.py
+```
+
 ---
 
 ## 🛠️ Project Structure
 
-- `app.py`: The main Streamlit user interface with interactive XAI dashboard.
-- `agents.py`: Orchestrates the AI agents (Reception, Scan, Comparison, Report Generator).
+- `app.py`: Main Streamlit web application and interactive XAI dashboard.
+- `langgraph_workflow.py`: LangGraph state machine orchestrating the multi-agent pipeline.
+- `agents.py`: Agent implementations (Reception, Scan Analysis, Comparison, and Reporting).
 - `model_inference.py`: Runs SegResNet inference and 3D Grad-CAM / Modality Attribution XAI engine.
 - `database.py`: Handles patient registration and scan history using PostgreSQL/SQLite.
 - `report_generator.py`: Generates printable PDF reports with multi-modal overlays and Grad-CAM visualizations.
-- `config.py`: Loads the configuration settings.
+- `config.py`: Project configuration and environment variables.
+- `test_langgraph_workflow.py`: Unit tests for the LangGraph workflow and agent graph.
 
 ---
 
 ## 📐 System Architecture
 
-Here is how the data flows through the different cooperative agents inside the system:
+Here is how data flows through the LangGraph multi-agent pipeline:
 
 ```mermaid
 graph TD
@@ -76,38 +84,31 @@ graph TD
 
     %% Elements
     UI["Streamlit UI (app.py)"]:::ui
-    Agent1["Agent 1: Reception Agent"]:::agent
     DB[("Patient Database")]:::database
-    Agent2["Agent 2: Scan Analysis / Inference Agent"]:::agent
-    SegResNet["MONAI SegResNet (Pretrained + Fine-Tuned)"]:::model
-    XAI["Explainable AI Engine (Grad-CAM & Modality Attribution)"]:::model
-    Agent3["Agent 3: Comparison Agent"]:::agent
-    Agent4["Agent 4: Report Generator Agent"]:::agent
+    SegResNet["MONAI SegResNet"]:::model
+    XAI["Explainable AI Engine (Grad-CAM)"]:::model
     Gemini["Google Gemini AI"]:::model
     PDF["PDF Clinical Report Generator"]:::ui
 
+    subgraph LangGraph ["LangGraph Multi-Agent Pipeline"]
+        N1["Reception Node"]:::agent
+        N2["Scan Validation Node"]:::agent
+        N3["Segmentation & Analysis Node"]:::agent
+        N4["Supervisor Node"]:::agent
+        N5["Reporting Node"]:::agent
+    end
+
     %% Workflow
-    UI -->|Input: Patient ID & MRI Scans| Agent1
-    Agent1 -->|Check if patient exists| DB
-    DB -->|Return patient history| Agent1
-    Agent1 -->|New/Returning patient details| UI
-
-    UI -->|Process 4 MRI Modalities| Agent2
-    Agent2 -->|Run 3D Sliding Window Inference| SegResNet
-    SegResNet -->|Predicted Mask & Volumes| Agent2
-    Agent2 -->|Extract Feature Activations & Gradients| XAI
-    XAI -->|Grad-CAM Heatmaps & Modality Importance| Agent2
-    Agent2 -->|Save Scan Details| DB
-
-    Agent2 -->|Scan Data| Agent3
-    DB -->|Fetch Last Scan| Agent3
-    Agent3 -->|Calculate growth/shrinkage metrics| UI
-
-    Agent2 & Agent3 -->|Raw metrics, changes & XAI drivers| Agent4
-    Agent4 -->|Generate Medical Report Prompt with XAI| Gemini
-    Gemini -->|AI Medical Report| Agent4
-    Agent4 -->|Draft Report| UI
-    
-    UI -->|Compile metrics, overlays, Grad-CAM, and report| PDF
-    PDF -->|Downloadable PDF File| UI
+    UI -->|Patient Info & MRI Scans| N1
+    N1 <-->|Query / Register Patient| DB
+    N1 --> N2
+    N2 -->|Valid Scans| N3
+    N3 <-->|Sliding Window Inference| SegResNet
+    N3 <-->|Feature Attribution & Grad-CAM| XAI
+    N3 -->|Save Scan & Volume Metrics| DB
+    N3 --> N4
+    N4 --> N5
+    N5 <-->|Generate Medical Draft| Gemini
+    N5 -->|State & Results| UI
+    UI -->|Compile Report & Visuals| PDF
 ```
