@@ -23,14 +23,14 @@ from config import BRATS_DATASET_PATH
 # Job: Check if patient is new or returning
 # ─────────────────────────────────────────
 def reception_agent(patient_id, name, age, gender):
-    print(f"\n[Agent 1] 🏥 Checking records for patient: {patient_id}")
+    print(f"\n[Agent 1] [Hospital] Checking records for patient: {patient_id}")
 
     # Check if patient exists in database
     is_returning = patient_exists(patient_id)
 
     previous_scan = None
     if is_returning:
-        print(f"[Agent 1] ✅ Returning patient found!")
+        print(f"[Agent 1] [OK] Returning patient found!")
         previous_scan = get_latest_scan(patient_id)
         if previous_scan:
             print(f"[Agent 1] Last scan date: {previous_scan.get('scan_date')}")
@@ -38,9 +38,9 @@ def reception_agent(patient_id, name, age, gender):
             is_returning = False
             print(f"[Agent 1] No previous scans found, treating as new patient!")
     else:
-        print(f"[Agent 1] 🆕 New patient — saving to database...")
+        print(f"[Agent 1] [NEW] New patient -- saving to database...")
         save_patient(patient_id, name, age, gender)
-        print(f"[Agent 1] ✅ Patient saved!")
+        print(f"[Agent 1] [OK] Patient saved!")
 
     return {
         "patient_id":    patient_id,
@@ -60,7 +60,7 @@ def scan_analysis_agent(
     flair_name, t1_name, t1ce_name, t2_name,
     seg_bytes=None, seg_name=None, has_seg=False
 ):
-    print(f"\n[Agent 2] 🔬 Starting scan analysis...")
+    print(f"\n[Agent 2] [Scan] Starting scan analysis...")
 
     # We'll store temp file paths here so we can clean up later
     tmp_files = []
@@ -100,7 +100,7 @@ def scan_analysis_agent(
         # Run the actual model inference
         print(f"[Agent 2] Running model inference...")
         result = model_inference.run_inference(data_dict, has_seg=has_seg)
-        print(f"[Agent 2] ✅ Inference complete!")
+        print(f"[Agent 2] [OK] Inference complete!")
 
         return result
 
@@ -119,7 +119,7 @@ def scan_analysis_agent(
 # Job: Read directly from BraTS dataset folder
 # ─────────────────────────────────────────
 def dataset_scan_agent(patient_folder):
-    print(f"\n[Agent 2B] 📁 Loading from BraTS dataset: {patient_folder}")
+    print(f"\n[Agent 2B] [Dataset] Loading from BraTS dataset: {patient_folder}")
 
     # Build full paths to all files
     base = os.path.join(BRATS_DATASET_PATH, patient_folder)
@@ -142,7 +142,7 @@ def dataset_scan_agent(patient_folder):
     for path in [flair_path, t1_path, t1ce_path, t2_path, seg_path]:
         if not os.path.exists(path):
             raise FileNotFoundError(f"[Agent 2B] ❌ File not found: {path}")
-        print(f"[Agent 2B] ✅ Found: {path}")
+        print(f"[Agent 2B] [OK] Found: {path}")
 
     # Build data dict — no temp files needed, read directly!
     data_dict = {
@@ -155,7 +155,7 @@ def dataset_scan_agent(patient_folder):
 
     print(f"[Agent 2B] Running model inference...")
     result = model_inference.run_inference(data_dict, has_seg=True)
-    print(f"[Agent 2B] ✅ Dataset scan complete!")
+    print(f"[Agent 2B] [OK] Dataset scan complete!")
 
     return result
 
@@ -164,7 +164,7 @@ def dataset_scan_agent(patient_folder):
 # Job: Compare current scan with previous scan
 # ─────────────────────────────────────────
 def comparison_agent(current_scan, previous_scan):
-    print(f"\n[Agent 3] 📊 Comparing current scan with previous scan...")
+    print(f"\n[Agent 3] [Stats] Comparing current scan with previous scan...")
 
     def calculate_change(current_val, previous_val):
         """Calculate absolute change, percent change, and trend"""
@@ -207,8 +207,8 @@ def comparison_agent(current_scan, previous_scan):
         previous_scan["et_volume"]
     )
 
-    print(f"[Agent 3] Total volume change: {total_change['absolute']} cm³ ({total_change['trend']})")
-    print(f"[Agent 3] ✅ Comparison complete!")
+    print(f"[Agent 3] Total volume change: {total_change['absolute']} cm3 ({total_change['trend']})")
+    print(f"[Agent 3] [OK] Comparison complete!")
 
     return {
         "previous_date":      previous_scan.get("scan_date", "Unknown"),
@@ -227,7 +227,7 @@ def comparison_agent(current_scan, previous_scan):
 # Job: Generate AI report using Gemini
 # ─────────────────────────────────────────
 def report_generator_agent(patient_info, scan_result, comparison=None):
-    print(f"\n[Agent 4] 📝 Generating AI medical report...")
+    print(f"\n[Agent 4] [Report] Generating AI medical report...")
 
     try:
         from google import genai
@@ -273,16 +273,38 @@ COMPARISON WITH PREVIOUS SCAN ({comparison['previous_date']}):
 """
 
         prompt += """
-Please write a detailed medical report with these exact sections:
+Please write a concise, professional, structured medical report with these exact sections and headers:
 
-1. EXECUTIVE SUMMARY
-2. DETAILED FINDINGS
-3. COMPARISON WITH PREVIOUS SCAN (only if comparison data provided above)
-4. CLINICAL OBSERVATIONS & EXPLAINABILITY (discuss which MRI modalities drove the decision based on the XAI attribution above)
-5. RECOMMENDATIONS
-6. DISCLAIMER (state this is AI-generated and must be reviewed by a physician)
+1. ANALYSIS SUMMARY
+- State patient details and core objective of scan analysis.
+- Note whether a lesion/tumor was detected and total estimated volume.
+- Clearly state that this is an AI-generated research output and has not been evaluated or confirmed by a physician.
 
-Use professional medical language but keep it understandable.
+2. SEGMENTATION MEASUREMENTS
+- Present the measurements in a clean structured list or markdown table:
+  * Total Tumor Volume (cm³)
+  * Necrotic Core (NCR) Volume and percentage
+  * Peritumoral Edema (ED) Volume and percentage
+  * Enhancing Tumor (ET) Volume and percentage
+
+3. PREVIOUS SCAN COMPARISON (Include only if comparison data is provided above)
+- Present numerical changes across sub-regions concisely without redundant introductory text.
+- Note volumetric differences objectively. Do not describe unchanged volume as proof that the tumor or patient is clinically stable.
+
+4. MODEL INTERPRETATION & EXPLAINABILITY
+- Discuss primary MRI modality contributions based on the XAI attribution above.
+- Mention spatial focus patterns observed by 3D Grad-CAM.
+
+5. RECOMMENDATIONS & CLINICAL NOTES
+- Recommend clinical correlation and specialist consultation.
+
+6. DISCLAIMER
+- Conclude the report with this exact disclaimer text verbatim:
+"This report contains AI-generated segmentation results for research purposes only. The results have not been independently validated for clinical use and should be reviewed by a qualified radiologist or physician. They must not be used as the sole basis for clinical decisions."
+
+Style guidelines:
+- Avoid excessive punctuation, decorative separator symbols, or conversational filler.
+- Keep the report concise, objective, and professionally structured.
 """
 
         # Call Gemini API
@@ -294,11 +316,11 @@ Use professional medical language but keep it understandable.
         )
 
         report = response.text
-        print(f"[Agent 4] ✅ Gemini report generated!")
+        print(f"[Agent 4] [OK] Gemini report generated!")
         return report
 
     except Exception as e:
-        print(f"[Agent 4] ⚠️ Gemini failed: {e}")
+        print(f"[Agent 4] [WARNING] Gemini failed: {e}")
         print(f"[Agent 4] Using fallback report...")
         return _fallback_report(patient_info, scan_result, comparison)
 
@@ -309,40 +331,39 @@ def _fallback_report(patient_info, scan_result, comparison=None):
     """Generate a basic report locally without Gemini"""
 
     report = f"""
-1. EXECUTIVE SUMMARY
-This report presents the findings of an AI-assisted brain MRI analysis 
-for patient {patient_info['name']} (ID: {patient_info['patient_id']}).
-{'A brain tumor was detected.' if scan_result['tumor_detected'] else 'No significant tumor was detected.'}
+1. ANALYSIS SUMMARY
+Patient ID: {patient_info['patient_id']} | Name: {patient_info['name']} | Age: {patient_info['age']} | Gender: {patient_info['gender']}
+Finding: {'A lesion consistent with tumor tissue was segmented.' if scan_result['tumor_detected'] else 'No significant tumor volume detected.'}
+Note: This is an AI-generated research analysis and has not been reviewed or confirmed by a physician.
 
-2. DETAILED FINDINGS
-Total Tumor Volume : {scan_result['total_volume']} cm³
-- NCR (Necrotic Core)     : {scan_result['ncr_volume']} cm³ ({scan_result['ncr_percent']}%)
-- ED  (Edema)             : {scan_result['ed_volume']} cm³ ({scan_result['ed_percent']}%)
-- ET  (Enhancing Tumor)   : {scan_result['et_volume']} cm³ ({scan_result['et_percent']}%)
+2. SEGMENTATION MEASUREMENTS
+- Total Tumor Volume    : {scan_result['total_volume']} cm³
+- Necrotic Core (NCR)   : {scan_result['ncr_volume']} cm³ ({scan_result['ncr_percent']}%)
+- Peritumoral Edema (ED): {scan_result['ed_volume']} cm³ ({scan_result['ed_percent']}%)
+- Enhancing Tumor (ET)  : {scan_result['et_volume']} cm³ ({scan_result['et_percent']}%)
 """
 
     if comparison:
         report += f"""
-3. COMPARISON WITH PREVIOUS SCAN ({comparison['previous_date']})
+3. PREVIOUS SCAN COMPARISON ({comparison['previous_date']})
 - Previous Total Volume : {comparison['prev_total_volume']} cm³
 - Current Total Volume  : {scan_result['total_volume']} cm³
-- Change                : {comparison['total_change']['absolute']} cm³ ({comparison['total_change']['trend']})
-- NCR Change            : {comparison['ncr_change']['absolute']} cm³ ({comparison['ncr_change']['trend']})
-- ED  Change            : {comparison['ed_change']['absolute']} cm³ ({comparison['ed_change']['trend']})
-- ET  Change            : {comparison['et_change']['absolute']} cm³ ({comparison['et_change']['trend']})
+- Volumetric Change     : {comparison['total_change']['absolute']} cm³ ({comparison['total_change']['trend']})
+- Sub-region Differences: NCR {comparison['ncr_change']['absolute']} cm³ | ED {comparison['ed_change']['absolute']} cm³ | ET {comparison['et_change']['absolute']} cm³
+(Note: Unchanged volumetric figures do not establish clinical stability.)
 """
 
+    top_m = scan_result.get('top_modality', 'N/A')
     report += f"""
-4. CLINICAL OBSERVATIONS
-The AI model analyzed the provided MRI modalities (FLAIR, T1, T1CE, T2)
-and segmented the tumor regions automatically.
+4. MODEL INTERPRETATION & EXPLAINABILITY
+- Primary Sequence Contribution: {top_m}
+- Multi-modality Attribution   : {scan_result.get('modality_attribution', {})}
+- Spatial Attention Focus      : 3D Grad-CAM centered on segmented abnormal signal intensity.
 
-5. RECOMMENDATIONS
-Please consult a qualified neuro-radiologist or neurosurgeon 
-for clinical decision making based on these findings.
+5. RECOMMENDATIONS & CLINICAL NOTES
+Clinical evaluation and formal radiological correlation by a licensed specialist are advised.
 
 6. DISCLAIMER
-This report was generated by an AI system and must be reviewed 
-and validated by a licensed physician before any clinical use.
+This report contains AI-generated segmentation results for research purposes only. The results have not been independently validated for clinical use and should be reviewed by a qualified radiologist or physician. They must not be used as the sole basis for clinical decisions.
 """
     return report

@@ -397,7 +397,7 @@ def run_inference(data_dict, has_seg=False):
         et_percent  = round(et_voxels  / total_voxels * 100, 1) if total_voxels > 0 else 0.0
 
         tumor_detected = total_voxels > 0
-        print(f"[Inference] Total tumor volume: {total_volume} cm³")
+        print(f"[Inference] Total tumor volume: {total_volume} cm3")
 
         # ─────────────────────────────────────────
         # Generate visualization images as base64

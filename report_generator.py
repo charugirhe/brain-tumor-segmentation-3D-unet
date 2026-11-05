@@ -54,7 +54,7 @@ def generate_pdf_report(
         'TitleStyle',
         parent=styles['Title'],
         fontSize=20,
-        textColor=colors.HexColor('#1a237e'),
+        textColor=colors.HexColor('#1e3a5f'),
         alignment=TA_CENTER,
         spaceAfter=6,
     )
@@ -63,7 +63,7 @@ def generate_pdf_report(
         'SubtitleStyle',
         parent=styles['Normal'],
         fontSize=11,
-        textColor=colors.HexColor('#3949ab'),
+        textColor=colors.HexColor('#0d9488'),
         alignment=TA_CENTER,
         spaceAfter=4,
     )
@@ -72,7 +72,7 @@ def generate_pdf_report(
         'SectionStyle',
         parent=styles['Heading2'],
         fontSize=13,
-        textColor=colors.HexColor('#1a237e'),
+        textColor=colors.HexColor('#1e3a5f'),
         spaceBefore=12,
         spaceAfter=6,
     )
@@ -114,7 +114,7 @@ def generate_pdf_report(
     ))
     content.append(HRFlowable(
         width="100%", thickness=2,
-        color=colors.HexColor('#1a237e'), spaceAfter=12
+        color=colors.HexColor('#1e3a5f'), spaceAfter=12
     ))
 
     # ── Section 2: Patient Info Table ──
@@ -132,8 +132,8 @@ def generate_pdf_report(
 
     patient_table = Table(patient_data, colWidths=[3.5*cm, 5*cm, 3.5*cm, 5*cm])
     patient_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#e8eaf6')),
-        ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#e8eaf6')),
+        ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#f0fdfa')),
+        ('BACKGROUND', (2, 0), (2, -1), colors.HexColor('#f0fdfa')),
         ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
         ('FONTNAME', (2, 0), (2, -1), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 10),
@@ -145,7 +145,7 @@ def generate_pdf_report(
     content.append(Spacer(1, 12))
 
     # ── Section 3: Scan Results Table ──
-    content.append(Paragraph("Tumor Analysis Results", section_style))
+    content.append(Paragraph("Segmentation Measurements", section_style))
 
     results_data = [
         ["Region", "Volume (cm³)", "Percentage", "Description"],
@@ -172,7 +172,7 @@ def generate_pdf_report(
         colWidths=[4.5*cm, 3.5*cm, 3*cm, 6*cm]
     )
     results_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a237e')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
         ('FONTSIZE', (0, 0), (-1, -1), 10),
@@ -180,7 +180,7 @@ def generate_pdf_report(
         ('ROWBACKGROUND', (0, 1), (-1, -1),
          [colors.white, colors.HexColor('#f5f5f5')]),
         ('PADDING', (0, 0), (-1, -1), 8),
-        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e8eaf6')),
+        ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#f0fdfa')),
         ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
     ]))
     content.append(results_table)
@@ -237,7 +237,7 @@ def generate_pdf_report(
     # ── Section 5: Comparison Table (only if returning patient) ──
     if comparison:
         content.append(Paragraph(
-            f"Comparison with Previous Scan ({comparison.get('previous_date', 'N/A')})",
+            f"Previous Scan Comparison ({comparison.get('previous_date', 'N/A')})",
             section_style
         ))
 
@@ -270,7 +270,7 @@ def generate_pdf_report(
             colWidths=[3*cm, 3.5*cm, 3.5*cm, 3.5*cm, 3.5*cm]
         )
         comp_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a237e')),
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e3a5f')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
             ('FONTSIZE', (0, 0), (-1, -1), 10),
@@ -284,36 +284,47 @@ def generate_pdf_report(
 
     # ── Section 6: AI Report Text ──
     if gemini_report:
-        content.append(Paragraph("AI Generated Medical Report", section_style))
+        content.append(Paragraph("Medical Analysis & Clinical Findings", section_style))
         content.append(HRFlowable(
             width="100%", thickness=1,
-            color=colors.HexColor('#3949ab'), spaceAfter=8
+            color=colors.HexColor('#0d9488'), spaceAfter=8
         ))
 
-        # Split report by lines and style section headers
-        for line in gemini_report.split('\n'):
-            line = line.strip()
-            if not line:
-                content.append(Spacer(1, 4))
+        for raw_line in gemini_report.split('\n'):
+            line = raw_line.strip()
+            # Clean pure separator lines
+            if line and len(line) > 3 and set(line).issubset({'-', '=', '*', '_', '#'}):
+                continue
+
+            clean_line = line.lstrip('#').strip()
+            clean_line = clean_line.replace('**', '').replace('__', '')
+            clean_line = clean_line.replace('!!!', '').strip()
+
+            if not clean_line:
+                content.append(Spacer(1, 3))
+                continue
+
+            # Skip any residual review required banner text if present
+            if '[RADIOLOGIST REVIEW REQUIRED]' in clean_line or 'RADIOLOGIST REVIEW REQUIRED' in clean_line:
                 continue
 
             # Make numbered section headers bold
-            if line and line[0].isdigit() and '.' in line[:3]:
-                content.append(Paragraph(line, bold_style))
+            if clean_line and (clean_line[0].isdigit() and '.' in clean_line[:3]):
+                content.append(Spacer(1, 4))
+                content.append(Paragraph(clean_line, bold_style))
             else:
-                content.append(Paragraph(line, normal_style))
+                content.append(Paragraph(clean_line, normal_style))
 
     # ── Section 7: Disclaimer ──
-    content.append(Spacer(1, 20))
+    content.append(Spacer(1, 16))
     content.append(HRFlowable(
         width="100%", thickness=1,
-        color=colors.red, spaceAfter=8
+        color=colors.HexColor('#0d9488'), spaceAfter=8
     ))
     content.append(Paragraph(
-        "⚠️ DISCLAIMER: This report is AI-generated and is intended for "
-        "research purposes only. It must be reviewed and validated by a "
-        "licensed physician or radiologist before any clinical use. "
-        "Do not make medical decisions based solely on this report.",
+        "This report contains AI-generated segmentation results for research purposes only. "
+        "The results have not been independently validated for clinical use and should be "
+        "reviewed by a qualified radiologist or physician. They must not be used as the sole basis for clinical decisions.",
         disclaimer_style
     ))
 
@@ -324,5 +335,5 @@ def generate_pdf_report(
     pdf_bytes = buffer.getvalue()
     buffer.close()
 
-    print("[PDF] ✅ PDF report generated successfully!")
+    print("[PDF] [OK] PDF report generated successfully!")
     return pdf_bytes

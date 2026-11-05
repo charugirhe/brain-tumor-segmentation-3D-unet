@@ -22,41 +22,40 @@ st.set_page_config(
 # ─────────────────────────────────────────
 st.markdown("""
 <style>
-    .main-header {
-        background: linear-gradient(135deg, #1a237e 0%, #3949ab 100%);
-        padding: 20px;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin-bottom: 20px;
-    }
-    .tumor-detected {
-        color: #d32f2f;
-        font-weight: bold;
-        font-size: 20px;
-    }
-    .no-tumor {
-        color: #2e7d32;
-        font-weight: bold;
-        font-size: 20px;
-    }
     .metric-card {
-        background: #f5f5f5;
-        padding: 15px;
-        border-radius: 8px;
+        background: #f8fafc;
+        padding: 14px;
+        border-radius: 6px;
         text-align: center;
-        border-left: 4px solid #3949ab;
+        border: 1px solid #e2e8f0;
+        border-left: 4px solid #0d9488;
     }
-    .grew { color: #d32f2f; font-weight: bold; }
-    .shrunk { color: #2e7d32; font-weight: bold; }
-    .stable { color: #f57c00; font-weight: bold; }
+    .grew { color: #b91c1c; font-weight: 600; }
+    .shrunk { color: #047857; font-weight: 600; }
+    .stable { color: #b45309; font-weight: 600; }
     .footer {
         text-align: center;
-        color: #9e9e9e;
+        color: #64748b;
         font-size: 12px;
-        margin-top: 40px;
-        padding: 20px;
-        border-top: 1px solid #e0e0e0;
+        margin-top: 30px;
+        padding: 12px;
+        border-top: 1px solid #e2e8f0;
+    }
+    /* Red Analyze MRI Scans Button */
+    button[kind="primary"], .stButton > button[kind="primary"] {
+        background-color: #dc2626 !important;
+        border-color: #b91c1c !important;
+        color: #ffffff !important;
+        font-weight: 600 !important;
+    }
+    button[kind="primary"]:hover, .stButton > button[kind="primary"]:hover {
+        background-color: #b91c1c !important;
+        border-color: #991b1b !important;
+    }
+    /* Subtle blue/teal accents */
+    .stTabs [data-baseweb="tab"][aria-selected="true"] {
+        border-bottom-color: #0d9488 !important;
+        color: #0d9488 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -64,12 +63,8 @@ st.markdown("""
 # ─────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────
-st.markdown("""
-<div class="main-header">
-    <h1>🧠 Brain Tumor Analysis </h1>
-    <p>AI-Powered MRI Segmentation & Analysis</p>
-</div>
-""", unsafe_allow_html=True)
+st.title("🧠 Brain Tumor Analysis")
+st.caption("AI-Powered MRI Segmentation & Analysis")
 
 # ─────────────────────────────────────────
 # LAZY IMPORTS — Load heavy modules only when needed
@@ -269,127 +264,91 @@ if button_disabled:
 # ─────────────────────────────────────────
 if analyze_clicked:
 
-    # Load agents only when needed
-    (
-        reception_agent,
-        scan_analysis_agent,
-        dataset_scan_agent,
-        comparison_agent,
-        report_generator_agent,
-    ) = load_agents()
+    # LangGraph multi-agent workflow
+    from langgraph_workflow import run_workflow
 
     patient_info_result = None
     scan_result = None
     comparison_result = None
     gemini_report = ""
 
-    # ── Agent 1: Reception ──
-    with st.status("🏥 Checking patient records...", expanded=True) as status:
+    with st.status("Analyzing MRI scans...", expanded=True) as status:
         try:
-            patient_info_result = reception_agent(
-                patient_id, patient_name, age, gender
-            )
-            
-
-            if patient_info_result["is_returning"] and patient_info_result["previous_scan"]:
-                st.write(f"✅ Returning patient found!")
-                st.write(
-                    f"Last scan: "
-                    f"{patient_info_result['previous_scan'].get('scan_date')}"
-                )
-            else:
-                st.write("✅ New patient registered!")
-            status.update(label="✅ Patient records checked!", state="complete")
-        except Exception as e:
-            st.error(f"❌ Error in reception: {e}")
-            status.update(label="❌ Reception failed!", state="error")
-            st.stop()
-
-    # ── Agent 2 or 2B: Scan Analysis ──
-    with st.status(
-        "🔬 Running model inference on RTX 3050...",
-        expanded=True
-    ) as status:
-        try:
+            # Build the initial state for the graph
             if dataset_patient_ready and selected_folder:
-                st.write(f"📁 Loading from dataset: {selected_folder}")
-                scan_result = dataset_scan_agent(selected_folder)
+                initial_state = {
+                    "patient_id":     patient_id,
+                    "name":           patient_name,
+                    "age":            age,
+                    "gender":         gender,
+                    "use_dataset":    True,
+                    "dataset_folder": selected_folder,
+                }
             else:
-                st.write("📤 Processing uploaded MRI files...")
-                scan_result = scan_analysis_agent(
-                    flair_bytes=flair_file.read(),
-                    t1_bytes=t1_file.read(),
-                    t1ce_bytes=t1ce_file.read(),
-                    t2_bytes=t2_file.read(),
-                    flair_name=flair_file.name,
-                    t1_name=t1_file.name,
-                    t1ce_name=t1ce_file.name,
-                    t2_name=t2_file.name,
-                    seg_bytes=seg_file.read() if seg_file else None,
-                    seg_name=seg_file.name if seg_file else None,
-                    has_seg=seg_file is not None,
-                )
+                initial_state = {
+                    "patient_id":  patient_id,
+                    "name":        patient_name,
+                    "age":         age,
+                    "gender":      gender,
+                    "use_dataset": False,
+                    "flair_bytes": flair_file.read(),
+                    "t1_bytes":    t1_file.read(),
+                    "t1ce_bytes":  t1ce_file.read(),
+                    "t2_bytes":    t2_file.read(),
+                    "flair_name":  flair_file.name,
+                    "t1_name":     t1_file.name,
+                    "t1ce_name":   t1ce_file.name,
+                    "t2_name":     t2_file.name,
+                    "seg_bytes":   seg_file.read() if seg_file else None,
+                    "seg_name":    seg_file.name  if seg_file else None,
+                    "has_seg":     seg_file is not None,
+                }
 
-            st.write(
-                f"✅ Tumor volume detected: "
-                f"{scan_result['total_volume']} cm³"
-            )
-            status.update(
-                label="✅ Inference complete!",
-                state="complete"
-            )
+            wf_result = run_workflow(initial_state)
+
+            # Handle validation failure
+            if wf_result.get("validation_errors"):
+                errs = wf_result["validation_errors"]
+                st.error("Validation error: " + "; ".join(errs))
+                status.update(label="Scan validation failed", state="error")
+                st.stop()
+
+            # Handle inference failure
+            if wf_result.get("scan_result") is None:
+                st.error("Analysis could not proceed: " + wf_result.get("error_message", "unknown error"))
+                status.update(label="Inference failed", state="error")
+                st.stop()
+
+            # Extract results from completed workflow state
+            patient_info_result = {
+                "patient_id":    patient_id,
+                "name":          patient_name,
+                "age":           age,
+                "gender":        gender,
+                "is_returning":  wf_result.get("is_returning", False),
+                "previous_scan": wf_result.get("previous_scan"),
+            }
+            scan_result       = wf_result["scan_result"]
+            comparison_result = wf_result.get("comparison_result")
+            gemini_report     = wf_result.get("gemini_report", "")
+
+            # Workflow execution details (rendered directly inside st.status without nested expander)
+            if patient_info_result["is_returning"]:
+                st.write("• Patient record: Returning patient found")
+            else:
+                st.write("• Patient record: New patient registered")
+            st.write(f"• Segmentation: SegResNet complete ({scan_result['total_volume']} cm³)")
+            if comparison_result:
+                st.write("• Comparison: Longitudinal analysis complete")
+
+            # Workflow completed successfully
+
+            status.update(label="Analysis complete", state="complete")
+
         except Exception as e:
-            st.error(f"❌ Error in scan analysis: {e}")
-            status.update(label="❌ Inference failed!", state="error")
+            st.error("Workflow error: " + str(e))
+            status.update(label="Workflow failed!", state="error")
             st.stop()
-
-    # ── Agent 3: Comparison (only for returning patients) ──
-    if patient_info_result["is_returning"]:
-        with st.status(
-            "📊 Comparing with previous scan...",
-            expanded=True
-        ) as status:
-            try:
-                comparison_result = comparison_agent(
-                    scan_result,
-                    patient_info_result["previous_scan"]
-                )
-                st.write(
-                    f"✅ Compared with scan from "
-                    f"{comparison_result['previous_date']}"
-                )
-                status.update(
-                    label="✅ Comparison complete!",
-                    state="complete"
-                )
-            except Exception as e:
-                st.error(f"❌ Error in comparison: {e}")
-                status.update(label="❌ Comparison failed!", state="error")
-
-    # ── Agent 4: Report Generation ──
-    with st.status(
-        "📝 Generating AI report with Gemini...",
-        expanded=True
-    ) as status:
-        try:
-            gemini_report = report_generator_agent(
-                patient_info={
-                    "patient_id": patient_id,
-                    "name": patient_name,
-                    "age": age,
-                    "gender": gender,
-                },
-                scan_result=scan_result,
-                comparison=comparison_result,
-            )
-            st.write("✅ AI report generated!")
-            status.update(
-                label="✅ Report ready!",
-                state="complete"
-            )
-        except Exception as e:
-            st.error(f"❌ Error generating report: {e}")
-            status.update(label="❌ Report failed!", state="error")
 
     # ── Save to Database ──
     try:
@@ -437,15 +396,9 @@ if "analysis_data" in st.session_state:
 
     # Tumor detected banner
     if scan_result["tumor_detected"]:
-        st.markdown(
-            '<p class="tumor-detected">🔴 TUMOR DETECTED</p>',
-            unsafe_allow_html=True
-        )
+        st.error("🔴 TUMOR DETECTED")
     else:
-        st.markdown(
-            '<p class="no-tumor">🟢 NO TUMOR DETECTED</p>',
-            unsafe_allow_html=True
-        )
+        st.success("🟢 NO TUMOR DETECTED")
 
     # ── 4 Metric Cards ──
     col1, col2, col3, col4 = st.columns(4)
@@ -490,12 +443,7 @@ if "analysis_data" in st.session_state:
                 )
 
     # Color legend below images
-    st.markdown(
-        "**Legend:** 🔴 Red = NCR &nbsp;|&nbsp; "
-        "🟢 Green = ED &nbsp;|&nbsp; "
-        "🔵 Blue = ET",
-        unsafe_allow_html=True
-    )
+    st.caption("**Legend:** 🔴 Red = NCR | 🟢 Green = ED | 🔵 Blue = ET")
 
     # ── Explainable AI (XAI) Section ──
     if scan_result.get("gradcam_image") or scan_result.get("modality_attribution"):
@@ -613,8 +561,20 @@ if "analysis_data" in st.session_state:
 
     # ── AI Report ──
     st.divider()
-    with st.expander("📝 AI Generated Medical Report", expanded=True):
-        st.markdown(gemini_report)
+    with st.expander("📝 AI Medical Analysis Report", expanded=True):
+        # Format the markdown cleanly: remove raw separator lines and excessive decorative characters
+        clean_display_lines = []
+        for line in gemini_report.split('\n'):
+            stripped = line.strip()
+            # Omit ugly decorative lines like '=======' or '-------'
+            if stripped and len(stripped) > 3 and set(stripped).issubset({'-', '=', '*', '_', '#'}):
+                continue
+            if '[RADIOLOGIST REVIEW REQUIRED]' in stripped or 'RADIOLOGIST REVIEW REQUIRED' in stripped:
+                continue
+            clean_display_lines.append(line)
+
+        final_display_text = "\n".join(clean_display_lines).strip()
+        st.markdown(final_display_text)
 
     # ── PDF Download ──
     st.divider()
@@ -675,10 +635,4 @@ if patient_id:
 # ─────────────────────────────────────────
 # FOOTER
 # ─────────────────────────────────────────
-st.markdown("""
-<div class="footer">
-    🧠 Brain Tumor Analysis System &nbsp;|&nbsp;
-    AI-Powered Medical Imaging &nbsp;|&nbsp;
-    ⚠️ For Research Purposes Only — Not for Clinical Use
-</div>
-""", unsafe_allow_html=True)
+st.caption("🧠 Brain Tumor Analysis System | AI-Powered Medical Imaging | ⚠️ For Research Purposes Only — Not for Clinical Use")

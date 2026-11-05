@@ -26,3 +26,4 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 # Model path
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "best_model.pth")
+

@@ -40,6 +40,7 @@ Create a file named `.env` in the root folder (this is already ignored by Git fo
 GEMINI_API_KEY=your_gemini_api_key_here
 BRATS_DATASET_PATH=C:/path/to/your/brats_dataset  # (Optional)
 ```
+> **Disclaimer:** This system is for research purposes only. AI-generated segmentations and reports have not been independently validated for clinical use and should be reviewed by a qualified radiologist or physician. They must not be used as the sole basis for clinical decisions.
 
 ### 4. Run the Streamlit Web Application
 Launch the app with Streamlit:
